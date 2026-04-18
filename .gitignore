@@ -1,0 +1,11 @@
+# Netsanet - Project Artifacts
+node_modules/
+.env
+
+# Foundry
+contracts/out/
+contracts/cache/
+contracts/lib/
+
+# Frontend build
+frontend/dist/
