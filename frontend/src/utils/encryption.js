@@ -78,7 +78,7 @@ export async function deriveKeyFromSignature(signature) {
     },
     keyMaterial,
     { name: 'AES-GCM', length: 256 },
-    false,           // not extractable (stays in Web Crypto)
+    true,           // extractable (needed for MVP demo QR code sharing)
     ['encrypt', 'decrypt']
   );
 
@@ -207,4 +207,30 @@ export function base64ToBytes(base64) {
     bytes[i] = binary.charCodeAt(i);
   }
   return bytes;
+}
+
+/**
+ * Export an AES-GCM CryptoKey to base64 string for QR Code sharing.
+ * @param {CryptoKey} key 
+ * @returns {Promise<string>}
+ */
+export async function exportKeyToBase64(key) {
+  const rawData = await crypto.subtle.exportKey('raw', key);
+  return bytesToBase64(new Uint8Array(rawData));
+}
+
+/**
+ * Import an AES-GCM CryptoKey from a base64 string.
+ * @param {string} base64Key 
+ * @returns {Promise<CryptoKey>}
+ */
+export async function importKeyFromBase64(base64Key) {
+  const keyBytes = base64ToBytes(base64Key);
+  return await crypto.subtle.importKey(
+    'raw',
+    keyBytes,
+    { name: 'AES-GCM', length: 256 },
+    true,
+    ['encrypt', 'decrypt']
+  );
 }

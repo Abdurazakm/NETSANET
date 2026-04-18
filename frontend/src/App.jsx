@@ -1,19 +1,7 @@
 import { useState } from 'react';
 import WalletConnect from './components/WalletConnect';
 import PatientDashboard from './pages/PatientDashboard';
-
-// Placeholder for Phase 5
-function DoctorDashboardFallback() {
-  return (
-    <div className="glass-panel p-10 rounded-xl text-center mt-6 border-eth-yellow border-t-4">
-      <h2 className="text-2xl font-bold mb-4 text-eth-yellow">Doctor / Clinic Interface</h2>
-      <p className="text-muted">
-        The doctor interface is coming in Phase 5. In this view, doctors will scan patient QR codes, request access, and push new medical records.
-      </p>
-    </div>
-  );
-}
-
+import DoctorDashboard from './pages/DoctorDashboard';
 function App() {
   const [role, setRole] = useState('patient'); // 'patient' or 'doctor'
   const [walletState, setWalletState] = useState(null); // { provider, signer, address, contract }
@@ -89,7 +77,12 @@ function App() {
                   contract={walletState.contract}
                 />
               ) : (
-                <DoctorDashboardFallback />
+                <DoctorDashboard
+                  provider={walletState.provider}
+                  signer={walletState.signer}
+                  address={walletState.address}
+                  contract={walletState.contract}
+                />
               )}
             </>
           )}

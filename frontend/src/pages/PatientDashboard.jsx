@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { deriveKeyFromWallet } from '../utils/encryption';
+import { deriveKeyFromWallet, exportKeyToBase64 } from '../utils/encryption';
 import PatientRegistration from '../components/PatientRegistration';
 import QRCodeDisplay from '../components/QRCodeDisplay';
 import AccessManager from '../components/AccessManager';
@@ -8,6 +8,7 @@ import MedicalTimeline from '../components/MedicalTimeline';
 export default function PatientDashboard({ provider, signer, address, contract }) {
   const [patientData, setPatientData] = useState(null);
   const [encryptionKey, setEncryptionKey] = useState(null);
+  const [base64Key, setBase64Key] = useState(null);
   const [loading, setLoading] = useState(true);
 
   // 1. Check if registered on chain
@@ -32,6 +33,8 @@ export default function PatientDashboard({ provider, signer, address, contract }
     try {
       const key = await deriveKeyFromWallet(signer);
       setEncryptionKey(key);
+      const exported = await exportKeyToBase64(key);
+      setBase64Key(exported);
     } catch (err) {
       console.error('Key derivation failed:', err);
       // User rejected the signature
@@ -85,7 +88,7 @@ export default function PatientDashboard({ provider, signer, address, contract }
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Column - ID & Access */}
         <div className="space-y-6">
-          <QRCodeDisplay address={address} />
+          <QRCodeDisplay address={address} base64Key={base64Key} />
           <AccessManager contract={contract} address={address} />
         </div>
 
