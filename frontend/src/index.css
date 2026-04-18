@@ -1,0 +1,86 @@
+:root {
+  /* Ethiopian Theme Colors */
+  --eth-green: #0A8B44;
+  --eth-yellow: #FCDB13;
+  --eth-red: #ED1A39;
+  
+  /* Modern Dark Theme Base */
+  --bg-dark: #121212;
+  --bg-card: #1E1E1E;
+  --bg-surface: #2A2A2A;
+  
+  --text-primary: #FFFFFF;
+  --text-secondary: #AAAAAA;
+  --text-muted: #666666;
+  
+  /* Accent & Interactive */
+  --accent-blue: #3B82F6;
+  --success: #10B981;
+  --error: #EF4444;
+  --warning: #F59E0B;
+  
+  /* Glow Effects */
+  --glow-green: rgba(10, 139, 68, 0.5);
+  --glow-yellow: rgba(252, 219, 19, 0.4);
+  --glow-red: rgba(237, 26, 57, 0.5);
+}
+
+body {
+  margin: 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: var(--bg-dark);
+  color: var(--text-primary);
+}
+
+h1, h2, h3, h4, h5, h6 {
+  margin: 0;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* Glassmorphism Classes */
+.glass-panel {
+  background: rgba(30, 30, 30, 0.7);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+}
+
+/* Helper Utilities */
+.eth-border-top {
+  border-top: 4px solid transparent;
+  background-image: linear-gradient(to right, var(--eth-green), var(--eth-yellow), var(--eth-red));
+  background-origin: border-box;
+}
+
+.text-gradient {
+  background: linear-gradient(to right, var(--eth-green), var(--eth-yellow));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  border-radius: 8px;
+  background-color: var(--accent-blue);
+  color: white;
+  padding: 10px 20px;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+}
+
+button:active {
+  transform: translateY(1px);
+}
