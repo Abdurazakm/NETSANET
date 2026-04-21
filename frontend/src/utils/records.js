@@ -21,7 +21,7 @@
  *   const records = await retrieveRecords(encryptionKey, arrayOfCIDs);
  */
 
-import { encryptJSON, decryptJSON, bytesToBase64, base64ToBytes } from './encryption.js';
+import { encryptJSON, decryptJSON } from './encryption.js';
 import { uploadMedicalRecord, fetchMedicalRecord } from './ipfs.js';
 
 // ─── Record Categories (mirrors the Solidity enum) ──────────────

@@ -1,91 +1,138 @@
-import { useState, useEffect } from 'react';
-import { CATEGORY_LABELS, CATEGORY_COLORS } from '../utils/records';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Lock, RefreshCw, Shield, ShieldCheck } from 'lucide-react';
+import { CATEGORY_COLORS, CATEGORY_LABELS } from '../utils/records';
 
 export default function DoctorAccessManager({ contract, doctorAddress, patientAddress }) {
   const [accessStatuses, setAccessStatuses] = useState({});
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  // Check which categories the doctor has access to
-  const fetchAccessStatuses = async () => {
+  const fetchAccessStatuses = useCallback(async ({ silent = false } = {}) => {
     try {
-      setLoading(true);
+      if (silent) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+
       const statuses = {};
-      
-      // The categories are 0 through 6
+
       for (const catId of Object.keys(CATEGORY_LABELS)) {
         const hasAccess = await contract.hasActiveAccess(patientAddress, doctorAddress, catId);
         statuses[catId] = hasAccess;
       }
-      
+
       setAccessStatuses(statuses);
     } catch (err) {
       console.error('Failed to fetch access statuses', err);
     } finally {
-      setLoading(false);
+      if (silent) {
+        setRefreshing(false);
+      } else {
+        setLoading(false);
+      }
     }
-  };
+  }, [contract, doctorAddress, patientAddress]);
 
   useEffect(() => {
     if (contract && patientAddress && doctorAddress) {
-      fetchAccessStatuses();
+      const timeoutId = window.setTimeout(() => {
+        void fetchAccessStatuses();
+      }, 0);
+
+      return () => window.clearTimeout(timeoutId);
     }
-  }, [contract, patientAddress, doctorAddress]);
+
+    return undefined;
+  }, [contract, patientAddress, doctorAddress, fetchAccessStatuses]);
+
+  const grantedCount = useMemo(
+    () => Object.values(accessStatuses).filter(Boolean).length,
+    [accessStatuses]
+  );
+
+  if (!patientAddress) {
+    return (
+      <section className="card-premium">
+        <div className="flex items-center gap-3">
+          <Shield className="size-5 text-muted-foreground" />
+          <h3 className="font-bold">Patient Access</h3>
+        </div>
+        <div className="mt-4 rounded-lg border border-dashed border-border p-4 text-center">
+          <p className="text-sm text-muted-foreground">
+            Scan patient QR to view access
+          </p>
+        </div>
+      </section>
+    );
+  }
 
   if (loading) {
-    return <div className="p-4 animate-pulse text-secondary">Checking access permissions...</div>;
+    return (
+      <section className="card-premium animate-pulse p-4">
+        Checking access...
+      </section>
+    );
   }
 
   return (
-    <div className="glass-panel p-6 rounded-xl border border-gray-800">
-      <div className="flex justify-between items-center mb-4">
-        <h3 className="text-lg font-bold">Category Access</h3>
-        <button 
-          onClick={fetchAccessStatuses}
-          className="text-xs bg-surface hover:bg-gray-700 px-3 py-1 rounded transition-colors"
+    <section className="card-premium">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <Shield className="size-5 text-primary" />
+          <h3 className="font-bold">Access Status</h3>
+        </div>
+
+        <button
+          onClick={() => fetchAccessStatuses({ silent: true })}
+          className="btn-ghost"
         >
-          Refresh
+          <RefreshCw className={`size-4 ${refreshing ? 'animate-spin' : ''}`} />
         </button>
       </div>
 
-      <p className="text-sm text-muted mb-4">
-        You can only view records for categories where the patient has explicitly granted you access.
-      </p>
+      <div className="mt-4 rounded-lg bg-primary/5 px-4 py-3">
+        <p className="text-sm font-medium text-primary">
+          {grantedCount} of {Object.keys(CATEGORY_LABELS).length} categories
+        </p>
+      </div>
 
-      <div className="space-y-3">
+      <div className="mt-4 space-y-2">
         {Object.entries(CATEGORY_LABELS).map(([catId, label]) => {
           const hasAccess = accessStatuses[catId];
-          const color = CATEGORY_COLORS[catId] || '#ccc';
+          const color = CATEGORY_COLORS[catId] || 'var(--primary)';
 
           return (
-            <div 
-              key={catId} 
-              className={`flex justify-between items-center p-3 rounded-lg border ${
-                hasAccess ? 'bg-[#1a1a1a] border-gray-700' : 'bg-transparent border-gray-800 opacity-60'
+            <div
+              key={catId}
+              className={`flex items-center justify-between rounded-lg border p-3 transition ${
+                hasAccess
+                  ? 'border-success/30 bg-success-light/30'
+                  : 'border-border bg-muted/30'
               }`}
             >
               <div className="flex items-center gap-3">
-                <span className="w-3 h-3 rounded-full" style={{ backgroundColor: color }} />
-                <span className={`text-sm ${hasAccess ? 'font-semibold text-white' : 'text-gray-400'}`}>
+                <span className="size-3 rounded-full" style={{ backgroundColor: color }} />
+                <span className="text-sm font-medium">
                   {label}
                 </span>
               </div>
-              
+
               {hasAccess ? (
-                <span className="text-xs font-bold text-success bg-green-900/20 px-2 py-1 rounded">
+                <span className="badge-success">
+                  <ShieldCheck className="size-3" />
                   Granted
                 </span>
               ) : (
-                <button 
-                  onClick={() => alert(`Please ask the patient to scan your address and grant you access to ${label}.\n\nYour Address: ${doctorAddress}`)}
-                  className="text-xs text-eth-yellow underline hover:text-yellow-400"
-                >
-                  Request Access
-                </button>
+                <span className="badge-warning">
+                  <Lock className="size-3" />
+                  Locked
+                </span>
               )}
             </div>
           );
         })}
       </div>
-    </div>
+    </section>
   );
 }

@@ -75,6 +75,17 @@ contract NetsanetCore {
     mapping(address => mapping(address => mapping(RecordCategory => uint256)))
         private _grantIndex;
 
+    /// @dev Pending access requests: patient → array of AccessRequest
+    mapping(address => AccessRequest[]) private _pendingRequests;
+
+    struct AccessRequest {
+        address        doctor;
+        RecordCategory category;
+        uint256        requestedAt;
+        string        message;      // doctor's message to patient
+        bool           pending;   // still pending?
+    }
+
     /// @dev Audit log entries per patient.
     mapping(address => AuditEntry[]) private _auditLog;
 
@@ -119,12 +130,42 @@ contract NetsanetCore {
         uint256         timestamp
     );
 
-    event AccessUsed(
+event AccessUsed(
         address indexed patient,
         address indexed doctor,
         RecordCategory  category,
-        uint256         recordCount,
-        uint256         timestamp
+        uint256        recordCount,
+        uint256        timestamp
+    );
+
+    event AccessRequested(
+        address indexed patient,
+        address indexed doctor,
+        RecordCategory  category,
+        string         message,
+        uint256        timestamp
+    );
+
+    event AccessRequestApproved(
+        address indexed patient,
+        address indexed doctor,
+        RecordCategory  category,
+        uint256        expiresAt,
+        uint256        timestamp
+    );
+
+    event AccessRequestRejected(
+        address indexed patient,
+        address indexed doctor,
+        RecordCategory  category,
+        uint256        timestamp
+    );
+
+    event AccessRequestCancelled(
+        address indexed patient,
+        address indexed doctor,
+        RecordCategory  category,
+        uint256        timestamp
     );
 
     // ──────────────────────────────────────────────
@@ -278,6 +319,162 @@ contract NetsanetCore {
             block.timestamp + (_durationHours * 1 hours),
             block.timestamp
         );
+    }
+
+    /// @notice Doctor requests access to a patient's records.
+    /// @param _patient The patient's wallet address.
+    /// @param _category Which record category to request.
+    /// @param _message Optional message to the patient.
+    function requestAccess(
+        address        _patient,
+        RecordCategory _category,
+        string calldata _message
+    ) external {
+        require(patients[_patient].exists, "Patient does not exist");
+        require(_patient != msg.sender, "Cannot request access to yourself");
+        require(!hasActiveAccess(_patient, msg.sender, _category), "Already have access");
+
+        _pendingRequests[_patient].push(AccessRequest({
+            doctor: msg.sender,
+            category: _category,
+            requestedAt: block.timestamp,
+            message: _message,
+            pending: true
+        }));
+
+        emit AccessRequested(_patient, msg.sender, _category, _message, block.timestamp);
+    }
+
+    /// @notice Get all pending access requests for a patient.
+    /// @return doctors Array of doctor addresses.
+    /// @return categories Array of category values.
+    /// @return timestamps Array of request timestamps.
+    /// @return messages Array of doctor messages.
+    function getPendingRequests(address _patient) external view returns (
+        address[] memory doctors,
+        uint8[]   memory categories,
+        uint256[] memory timestamps,
+        string[]  memory messages
+    ) {
+        uint256 count = _pendingRequests[_patient].length;
+        doctors    = new address[](count);
+        categories = new uint8[](count);
+        timestamps = new uint256[](count);
+        messages   = new string[](count);
+
+        uint256 activeCount = 0;
+        for (uint256 i = 0; i < count; i++) {
+            if (_pendingRequests[_patient][i].pending) {
+                doctors[activeCount]    = _pendingRequests[_patient][i].doctor;
+                categories[activeCount] = uint8(_pendingRequests[_patient][i].category);
+                timestamps[activeCount] = _pendingRequests[_patient][i].requestedAt;
+                messages[activeCount]  = _pendingRequests[_patient][i].message;
+                activeCount++;
+            }
+        }
+
+        // Resize arrays to actual count
+        assembly {
+            mstore(doctors, activeCount)
+            mstore(categories, activeCount)
+            mstore(timestamps, activeCount)
+            mstore(messages, activeCount)
+        }
+    }
+
+    /// @notice Patient approves a doctor's access request.
+    /// @param _doctor   The doctor's wallet address.
+    /// @param _category Which category to approve.
+    /// @param _durationHours How many hours the access lasts.
+    function approveRequest(
+        address        _doctor,
+        RecordCategory _category,
+        uint256        _durationHours
+    ) external onlyPatient {
+        bool found = false;
+        for (uint256 i = 0; i < _pendingRequests[msg.sender].length; i++) {
+            AccessRequest storage req = _pendingRequests[msg.sender][i];
+            if (req.pending && req.doctor == _doctor && req.category == _category) {
+                req.pending = false;
+                found = true;
+                break;
+            }
+        }
+        require(found, "No pending request found");
+
+        // Create the grant
+        _accessGrants[msg.sender].push(AccessGrant({
+            doctor:    _doctor,
+            category:  _category,
+            grantedAt: block.timestamp,
+            expiresAt: block.timestamp + (_durationHours * 1 hours),
+            revoked:   false
+        }));
+        _grantIndex[msg.sender][_doctor][_category] = _accessGrants[msg.sender].length;
+
+        _auditLog[msg.sender].push(AuditEntry({
+            accessor:  _doctor,
+            category:  _category,
+            timestamp: block.timestamp,
+            action:    "ACCESS_GRANTED"
+        }));
+
+        emit AccessRequestApproved(
+            msg.sender,
+            _doctor,
+            _category,
+            block.timestamp + (_durationHours * 1 hours),
+            block.timestamp
+        );
+    }
+
+    /// @notice Patient rejects a doctor's access request.
+    /// @param _doctor   The doctor's wallet address.
+    /// @param _category Which category to reject.
+    function rejectRequest(
+        address        _doctor,
+        RecordCategory _category
+    ) external onlyPatient {
+        bool found = false;
+        for (uint256 i = 0; i < _pendingRequests[msg.sender].length; i++) {
+            AccessRequest storage req = _pendingRequests[msg.sender][i];
+            if (req.pending && req.doctor == _doctor && req.category == _category) {
+                req.pending = false;
+                found = true;
+                break;
+            }
+        }
+        require(found, "No pending request found");
+
+        _auditLog[msg.sender].push(AuditEntry({
+            accessor:  _doctor,
+            category:  _category,
+            timestamp: block.timestamp,
+            action:    "ACCESS_REJECTED"
+        }));
+
+        emit AccessRequestRejected(msg.sender, _doctor, _category, block.timestamp);
+    }
+
+    /// @notice Doctor cancels their own access request.
+    /// @param _patient  The patient's wallet address.
+    /// @param _category Which category to cancel.
+    function cancelRequest(
+        address        _patient,
+        RecordCategory _category
+    ) external {
+        bool found = false;
+        for (uint256 i = 0; i < _pendingRequests[_patient].length; i++) {
+            AccessRequest storage req = _pendingRequests[_patient][i];
+            if (req.pending && req.doctor == msg.sender && req.category == _category) {
+                req.pending = false;
+                found = true;
+                break;
+            }
+        }
+        require(found, "No pending request found");
+
+        emit AccessRequestCancelled(_patient, msg.sender, _category, block.timestamp);
     }
 
     /// @notice Patient revokes a doctor's access to a specific category

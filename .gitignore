@@ -1,11 +1,15 @@
 # Netsanet - Project Artifacts
 node_modules/
 .env
+**/.env
+!.env.example
+!**/.env.example
 
 # Foundry
 contracts/out/
 contracts/cache/
 contracts/lib/
+contracts/broadcast/
 
 # Frontend build
 frontend/dist/

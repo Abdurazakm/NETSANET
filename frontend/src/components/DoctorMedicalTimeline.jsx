@@ -1,180 +1,371 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import {
+  AlertCircle,
+  FileClock,
+  FileSearch,
+  RefreshCw,
+  ShieldAlert,
+} from 'lucide-react';
 import { retrieveRecords, CATEGORY_LABELS, CATEGORY_COLORS } from '../utils/records';
 import { importKeyFromBase64 } from '../utils/encryption';
 
-export default function DoctorMedicalTimeline({ contract, doctorAddress, patientAddress, base64Key }) {
+function formatDateTime(timestamp) {
+  if (!timestamp) {
+    return 'Unknown time';
+  }
+
+  return new Date(timestamp).toLocaleString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function formatFieldLabel(key) {
+  const overrides = {
+    cd4Count: 'CD4 / Vital Stat',
+  };
+
+  if (overrides[key]) {
+    return overrides[key];
+  }
+
+  return key
+    .replace(/([A-Z])/g, ' $1')
+    .replace(/^./, (value) => value.toUpperCase())
+    .trim();
+}
+
+function getRecordFields(payload) {
+  const data = payload?.data ?? payload ?? {};
+  return Object.entries(data).filter(([, value]) => value !== '' && value !== null && value !== undefined);
+}
+
+function shortenAddress(value) {
+  if (!value || value.length < 12) {
+    return value || '';
+  }
+
+  return `${value.slice(0, 6)}...${value.slice(-4)}`;
+}
+
+function RecordSkeleton() {
+  return (
+    <div className="rounded-[26px] border border-[#dfe7ff] bg-[#fbfcff] p-5 animate-pulse">
+      <div className="flex flex-wrap gap-3">
+        <div className="h-5 w-24 rounded-full bg-[#dbe5ff]" />
+        <div className="h-5 w-28 rounded-full bg-[#eef3ff]" />
+      </div>
+      <div className="mt-4 h-6 w-52 rounded bg-[#dbe5ff]" />
+      <div className="mt-3 h-4 w-40 rounded bg-[#eef3ff]" />
+      <div className="mt-5 grid gap-3 sm:grid-cols-2">
+        <div className="h-20 rounded-2xl bg-white" />
+        <div className="h-20 rounded-2xl bg-white" />
+      </div>
+    </div>
+  );
+}
+
+export default function DoctorMedicalTimeline({
+  contract,
+  doctorAddress,
+  patientAddress,
+  base64Key,
+}) {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [cryptoKey, setCryptoKey] = useState(null);
 
-  // First prepare the crypto key
   useEffect(() => {
+    let active = true;
+
     async function prepareKey() {
-      if (base64Key) {
-        try {
-          const key = await importKeyFromBase64(base64Key);
+      if (!base64Key) {
+        setCryptoKey(null);
+        setError('Patient session is missing the shared encryption key, so authorized records cannot be decrypted.');
+        return;
+      }
+
+      try {
+        const key = await importKeyFromBase64(base64Key);
+        if (active) {
           setCryptoKey(key);
-        } catch (err) {
-          console.error("Failed to import key:", err);
-          setError("Failed to import patient's cryptographic key.");
+          setError('');
         }
-      } else {
-        setError("Missing patient's cryptographic key. Records cannot be decrypted.");
+      } catch (err) {
+        console.error('Failed to import doctor session key:', err);
+        if (active) {
+          setCryptoKey(null);
+          setError("Failed to import the patient's cryptographic key.");
+        }
       }
     }
-    prepareKey();
+
+    void prepareKey();
+
+    return () => {
+      active = false;
+    };
   }, [base64Key]);
 
-  const fetchAuthorizedRecords = async () => {
+  const fetchAuthorizedRecords = useCallback(async ({ silent = false } = {}) => {
     try {
-      setLoading(true);
-      setError(''); // Clear previous errors (aside from key errors handled above)
+      if (silent) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
 
       if (!cryptoKey) {
-        // Can't decrypt without key, although we might want to still show encrypted CIDs.
-        // For MVP, we just wait for the key if it exists.
-        if (!base64Key) {
-          setLoading(false);
-          return;
-        }
+        setRecords([]);
+        return;
       }
+
+      setError('');
 
       let allChainRecords = [];
 
-      // Fetch categories the doctor has access to
       for (const catId of Object.keys(CATEGORY_LABELS)) {
         const hasAccess = await contract.hasActiveAccess(patientAddress, doctorAddress, catId);
         if (hasAccess) {
-          // Fetch the records for this authorized category
           try {
-            // Note: getRecordsByCategory may revert if access is not truly granted in contract
             const catRecords = await contract.getRecordsByCategory(patientAddress, catId);
             allChainRecords = allChainRecords.concat(catRecords);
-          } catch (e) {
-            console.error(`Failed to fetch category ${catId}:`, e);
+          } catch (categoryError) {
+            console.error(`Failed to fetch category ${catId}:`, categoryError);
           }
         }
       }
 
       if (allChainRecords.length === 0) {
         setRecords([]);
-        setLoading(false);
         return;
       }
 
-      // Decrypt all fetched records
-      const cids = allChainRecords.map(r => r.ipfsCID);
+      const cids = allChainRecords.map((record) => record.ipfsCID);
       const decryptedResults = await retrieveRecords(cryptoKey, cids);
-      
-      const combined = allChainRecords.map((chainRec, idx) => ({
-        timestamp: Number(chainRec.timestamp) * 1000,
-        addedByClinic: chainRec.addedByClinic,
-        category: Number(chainRec.category),
-        recordType: chainRec.recordType,
-        payload: decryptedResults[idx].success ? decryptedResults[idx].data : null,
-        error: !decryptedResults[idx].success ? decryptedResults[idx].error : null
-      }));
 
-      // Sort newest first
-      combined.sort((a, b) => b.timestamp - a.timestamp);
-      setRecords(combined);
+      const combinedRecords = allChainRecords
+        .map((chainRecord, index) => ({
+          timestamp: Number(chainRecord.timestamp) * 1000,
+          addedByClinic: chainRecord.addedByClinic,
+          category: Number(chainRecord.category),
+          recordType: chainRecord.recordType,
+          payload: decryptedResults[index].success ? decryptedResults[index].data : null,
+          error: !decryptedResults[index].success ? decryptedResults[index].error : null,
+        }))
+        .sort((left, right) => right.timestamp - left.timestamp);
 
+      setRecords(combinedRecords);
     } catch (err) {
       console.error(err);
-      setError('Failed to fetch records from the blockchain.');
+      setError('Failed to fetch authorized records from the blockchain.');
     } finally {
-      setLoading(false);
+      if (silent) {
+        setRefreshing(false);
+      } else {
+        setLoading(false);
+      }
     }
-  };
+  }, [contract, cryptoKey, doctorAddress, patientAddress]);
 
   useEffect(() => {
     if (contract && patientAddress && doctorAddress && cryptoKey) {
-      fetchAuthorizedRecords();
+      const timeoutId = window.setTimeout(() => {
+        void fetchAuthorizedRecords();
+      }, 0);
+
+      return () => window.clearTimeout(timeoutId);
     }
-  }, [contract, patientAddress, doctorAddress, cryptoKey]);
 
-  if (loading) return <div className="animate-pulse p-4 text-center">Fetching authorized medical history...</div>;
+    return undefined;
+  }, [contract, patientAddress, doctorAddress, cryptoKey, fetchAuthorizedRecords]);
 
-  return (
-    <div className="glass-panel p-6 rounded-xl border border-gray-800 h-full">
-      <div className="flex justify-between items-center mb-6">
-        <h3 className="text-xl font-bold">Patient Timeline (Authorized View)</h3>
-        <span className="text-sm text-secondary bg-surface px-3 py-1 rounded-full">
-          {records.length} {records.length === 1 ? 'Record' : 'Records'}
-        </span>
-      </div>
-
-      {error && !base64Key && (
-        <div className="text-error bg-red-900/20 p-4 rounded-lg border border-red-500/50 mb-6 text-sm">
-          ⚠️ {error} You will not be able to read the patient's records.
-        </div>
-      )}
-
-      {records.length === 0 && !loading && !error ? (
-        <div className="text-center py-10 bg-surface rounded-lg border border-dashed border-gray-700">
-          <p className="text-muted">No records available.</p>
-          <p className="text-sm text-secondary mt-2">
-            The patient either has no records, or you have not been granted access to the categories containing them.
+  if (!patientAddress) {
+    return (
+      <section className="page-card h-full rounded-[34px] p-6 text-[#102347] sm:p-8">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-[#7b88a3]">
+          Authorized Timeline
+        </p>
+        <h3 className="mt-2 text-3xl font-semibold tracking-tight">
+          Timeline ready when a patient session starts
+        </h3>
+        <div className="mt-6 rounded-[28px] border border-dashed border-[#d7e2ff] bg-[#f8fbff] p-10 text-center">
+          <FileSearch className="mx-auto size-12 text-[#1047b6]" />
+          <p className="mt-4 text-xl font-semibold text-[#102347]">
+            No patient selected yet
+          </p>
+          <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-[#60708f]">
+            Scan a patient QR code or paste the secure payload to load only the records this doctor is permitted to view.
           </p>
         </div>
-      ) : (
-        <div className="relative border-l-2 border-gray-700 ml-4 space-y-8">
-          {records.map((rec, idx) => {
-            const hasData = !!rec.payload;
-            const date = new Date(rec.timestamp).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-            
-            return (
-              <div key={idx} className="relative pl-6">
-                <div 
-                  className="absolute -left-[9px] top-1 w-4 h-4 rounded-full border-2 border-bg-dark"
-                  style={{ backgroundColor: CATEGORY_COLORS[rec.category] || '#fff' }}
-                />
-                
-                <div className="bg-surface rounded-lg p-5 border border-gray-700 hover:border-gray-500 transition-colors">
-                  <div className="flex flex-wrap justify-between items-baseline mb-2 gap-2">
-                    <span 
-                      className="text-xs font-bold uppercase tracking-wider px-2 py-1 rounded-sm text-white"
-                      style={{ backgroundColor: CATEGORY_COLORS[rec.category] || '#ccc' }}
-                    >
-                      {CATEGORY_LABELS[rec.category]}
-                    </span>
-                    <span className="text-sm text-muted">{date}</span>
-                  </div>
-                  
-                  <h4 className="text-lg font-semibold mb-1 text-primary">{rec.recordType}</h4>
-                  <p className="text-xs font-mono text-muted mb-4 truncate" title={rec.addedByClinic}>
-                    Added by: {rec.addedByClinic === doctorAddress ? "You" : `${rec.addedByClinic.substring(0,6)}...${rec.addedByClinic.substring(38)}`}
-                  </p>
+      </section>
+    );
+  }
 
-                  {hasData ? (
-                    <div className="bg-[#1a1a1a] p-4 rounded-md border border-gray-800 text-sm">
-                      {rec.payload.data?.diagnosis && (
-                        <p className="mb-2"><span className="text-secondary">Diagnosis:</span> {rec.payload.data.diagnosis}</p>
-                      )}
-                      {rec.payload.data?.medication && (
-                        <p className="mb-2"><span className="text-secondary">Medication:</span> {rec.payload.data.medication}</p>
-                      )}
-                      {rec.payload.data?.cd4Count && (
-                        <p className="mb-2"><span className="text-secondary">CD4/Vital Stat:</span> {rec.payload.data.cd4Count}</p>
-                      )}
-                      {rec.payload.data?.notes && (
-                        <p className="italic text-gray-400 mt-3 pt-3 border-t border-gray-800">
-                          "{rec.payload.data.notes}"
-                        </p>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="text-error text-sm p-3 bg-red-900/20 rounded border border-red-900/50">
-                      ⚠️ Decryption failed or IPFS CID unavailable. ({rec.error})
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          })}
+  return (
+    <section className="page-card h-full rounded-[34px] p-6 text-[#102347] sm:p-8">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-[#7b88a3]">
+            Authorized Timeline
+          </p>
+          <h3 className="mt-2 text-3xl font-semibold tracking-tight">
+            Patient records you are allowed to view
+          </h3>
+          <p className="mt-2 text-sm leading-6 text-[#60708f]">
+            This timeline only shows records inside the categories the patient granted to the current doctor wallet.
+          </p>
         </div>
-      )}
-    </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="rounded-full border border-[#dce5ff] bg-[#f7f9fd] px-4 py-2 text-xs font-semibold uppercase tracking-[0.24em] text-[#1047b6] shadow-sm">
+            {records.length} {records.length === 1 ? 'Record' : 'Records'}
+          </div>
+          <button
+            onClick={() => fetchAuthorizedRecords({ silent: true })}
+            className="inline-flex items-center gap-2 rounded-full border border-[#dce5ff] bg-[#f7f9fd] px-4 py-2 text-sm font-medium text-[#17305a] shadow-sm transition hover:border-[#b9cbff]"
+          >
+            <RefreshCw className={`size-4 ${refreshing ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-6 space-y-4">
+        {error ? (
+          <div className="rounded-[28px] border border-[#f2c0c7] bg-[#fff6f7] p-6 text-center">
+            <AlertCircle className="mx-auto size-10 text-[#d64257]" />
+            <p className="mt-4 text-lg font-semibold text-[#9f1d33]">
+              Authorized timeline unavailable
+            </p>
+            <p className="mt-2 text-sm leading-6 text-[#b04b5d]">{error}</p>
+          </div>
+        ) : null}
+
+        {loading ? (
+          <>
+            <RecordSkeleton />
+            <RecordSkeleton />
+          </>
+        ) : !error && records.length === 0 ? (
+          <div className="rounded-[28px] border border-dashed border-[#d7e2ff] bg-[#f8fbff] p-10 text-center">
+            <FileSearch className="mx-auto size-12 text-[#1047b6]" />
+            <p className="mt-4 text-xl font-semibold text-[#102347]">
+              No authorized records available
+            </p>
+            <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-[#60708f]">
+              The patient may not have any records yet, or this doctor wallet has not been granted access to the categories containing them.
+            </p>
+          </div>
+        ) : (
+          records.map((record, index) => {
+            const fields = getRecordFields(record.payload);
+            const noteField = fields.find(([key]) => key === 'notes');
+            const mainFields = fields.filter(([key]) => key !== 'notes');
+
+            return (
+              <article
+                key={`${record.timestamp}-${index}`}
+                className="rounded-[28px] border border-[#dfe7ff] bg-[#fbfcff] p-5 shadow-sm"
+              >
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className="rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-white"
+                        style={{ backgroundColor: CATEGORY_COLORS[record.category] || '#1047b6' }}
+                      >
+                        {CATEGORY_LABELS[record.category]}
+                      </span>
+                      <span className="rounded-full border border-[#dce5ff] bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-[#7b88a3]">
+                        {formatDateTime(record.timestamp)}
+                      </span>
+                    </div>
+
+                    <h4 className="mt-4 text-2xl font-semibold tracking-tight">
+                      {record.recordType}
+                    </h4>
+
+                    <div className="mt-3 rounded-2xl border border-[#e6ecff] bg-white p-4">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#7b88a3]">
+                        Added By Clinic
+                      </p>
+                      <p className="mt-2 font-mono text-sm text-[#24406c]">
+                        {record.addedByClinic === doctorAddress
+                          ? 'You'
+                          : `${record.addedByClinic} (${shortenAddress(record.addedByClinic)})`}
+                      </p>
+                    </div>
+
+                    {record.payload ? (
+                      <>
+                        {mainFields.length > 0 ? (
+                          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                            {mainFields.map(([key, value]) => (
+                              <div
+                                key={key}
+                                className="rounded-2xl border border-[#e6ecff] bg-white p-4"
+                              >
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#7b88a3]">
+                                  {formatFieldLabel(key)}
+                                </p>
+                                <p className="mt-2 text-sm leading-6 text-[#24406c]">
+                                  {String(value)}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="mt-4 rounded-2xl border border-[#e6ecff] bg-white p-4 text-sm text-[#60708f]">
+                            Record decrypted successfully, but there are no additional structured fields to display.
+                          </div>
+                        )}
+
+                        {noteField ? (
+                          <div className="panel-subtle mt-4 p-5 text-[#102347] shadow-none">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#7b88a3]">
+                              Clinical Notes
+                            </p>
+                            <p className="mt-3 text-sm leading-7 text-[#24406c]">
+                              {String(noteField[1])}
+                            </p>
+                          </div>
+                        ) : null}
+                      </>
+                    ) : (
+                      <div className="mt-4 rounded-2xl border border-[#f2c0c7] bg-[#fff4f5] p-4 text-sm text-[#b42335]">
+                        <div className="flex items-start gap-3">
+                          <ShieldAlert className="mt-0.5 size-4 shrink-0" />
+                          <p>
+                            Decryption failed for this record. {record.error || 'The encrypted payload could not be read from IPFS.'}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="w-full max-w-[220px] rounded-[24px] border border-[#e1e9ff] bg-white p-4 text-sm text-[#60708f]">
+                    <div className="flex items-center gap-2 text-[#17305a]">
+                      <FileClock className="size-4 text-[#1047b6]" />
+                      <span className="font-medium">Record status</span>
+                    </div>
+                    <p className="mt-3 leading-6">
+                      {record.payload
+                        ? 'Authorized record fetched and decrypted successfully.'
+                        : 'Record is on chain, but the payload could not be decoded for this session.'}
+                    </p>
+                  </div>
+                </div>
+              </article>
+            );
+          })
+        )}
+      </div>
+    </section>
   );
 }
