@@ -16,15 +16,18 @@
  *     they cannot read the medical data without the patient's key.
  *
  * Environment variables needed (in frontend/.env):
- *   VITE_PINATA_JWT       — Your Pinata API JWT token
+ *   VITE_UPLOAD_API_URL   — Your backend upload API URL
  *   VITE_PINATA_GATEWAY   — Your dedicated Pinata gateway URL
  */
 
 // ─── Configuration ───────────────────────────────────────────────
 
-const PINATA_JWT = import.meta.env.VITE_PINATA_JWT;
+import { bytesToBase64 } from "./encryption.js";
+
+const UPLOAD_API_URL =
+  import.meta.env.VITE_UPLOAD_API_URL || "http://localhost:8787";
 const PINATA_GATEWAY = import.meta.env.VITE_PINATA_GATEWAY;
-const PINATA_API_URL = 'https://api.pinata.cloud';
+const PINATA_API_URL = "https://api.pinata.cloud";
 
 // Public IPFS gateways as fallback
 const PUBLIC_GATEWAYS = [
@@ -45,52 +48,34 @@ const PUBLIC_GATEWAYS = [
  * @returns {Promise<{cid: string, size: number}>}  The IPFS CID and file size.
  */
 export async function uploadToIPFS(encryptedData, metadata = {}) {
-  if (!PINATA_JWT) {
-    throw new Error(
-      'VITE_PINATA_JWT is not set. Add it to frontend/.env'
-    );
-  }
-
-  // Create a File object from the encrypted bytes
   const timestamp = Date.now();
   const filename = metadata.name || `netsanet-record-${timestamp}.enc`;
 
-  const file = new File([encryptedData], filename, {
-    type: 'application/octet-stream',
-  });
-
-  // Build the multipart form data
-  const formData = new FormData();
-  formData.append('file', file);
-
-  // Add Pinata metadata if provided
-  const pinataMeta = {
-    name: filename,
-    ...(metadata.keyvalues && { keyvalues: metadata.keyvalues }),
-  };
-  formData.append('pinataMetadata', JSON.stringify(pinataMeta));
-
-  // Upload to Pinata
-  const response = await fetch(`${PINATA_API_URL}/pinning/pinFileToIPFS`, {
-    method: 'POST',
+  const response = await fetch(`${UPLOAD_API_URL.replace(/\/+$/, "")}/api/ipfs/pin`, {
+    method: "POST",
     headers: {
-      Authorization: `Bearer ${PINATA_JWT}`,
+      "Content-Type": "application/json",
     },
-    body: formData,
+    body: JSON.stringify({
+      bytesBase64: bytesToBase64(encryptedData),
+      name: filename,
+      keyvalues: {
+        app: "netsanet",
+        ...(metadata.keyvalues || {}),
+      },
+    }),
   });
 
   if (!response.ok) {
     const errorBody = await response.text();
-    throw new Error(
-      `Pinata upload failed (${response.status}): ${errorBody}`
-    );
+    throw new Error(`Upload API failed (${response.status}): ${errorBody}`);
   }
 
   const result = await response.json();
 
   return {
-    cid: result.IpfsHash,
-    size: result.PinSize,
+    cid: result.cid,
+    size: result.size,
   };
 }
 

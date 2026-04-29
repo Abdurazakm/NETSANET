@@ -401,8 +401,8 @@ MetaMask → Click the three dots on your account → Account Details → Show P
 #### 📁 File: `frontend/.env`
 
 ```env
-# Pinata JWT (from Step 3)
-VITE_PINATA_JWT=eyJhbGciOiJIUzI1NiIs...your_full_jwt_here
+# Upload API URL for the backend proxy
+VITE_UPLOAD_API_URL=http://localhost:8787
 
 # Your Pinata Dedicated Gateway (without https://)
 # Example: your-gateway-name.mypinata.cloud
@@ -414,6 +414,16 @@ VITE_SEPOLIA_RPC_URL=https://rpc.sepolia.org
 # ⚠️  YOU FILL THIS IN AFTER STEP 5 (deploying the contract)
 VITE_CONTRACT_ADDRESS=0x...deployed_contract_address
 ```
+
+#### 📁 File: `backend/.env`
+
+```env
+PORT=8787
+PINATA_JWT=your_pinata_jwt_here
+CORS_ORIGIN=http://localhost:5173
+```
+
+The backend keeps your Pinata JWT off the browser. The frontend uploads encrypted files to your local API, and the API pins them to IPFS.
 
 ---
 

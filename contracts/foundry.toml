@@ -13,3 +13,4 @@ remappings = [
 
 [rpc_endpoints]
 sepolia = "${SEPOLIA_RPC_URL}"
+base_sepolia = "${BASE_SEPOLIA_RPC_URL}"
