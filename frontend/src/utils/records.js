@@ -527,7 +527,7 @@ export async function submitRecord(
     recordType
   );
 
-  console.log(`✅ Record uploaded. CID: ${cid}`);
+  console.log(`✅ Record uploaded. CID`);
   return cid;
 }
 
