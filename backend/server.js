@@ -1,4 +1,46 @@
 import http from "node:http";
+import { existsSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+function loadLocalEnvFile() {
+  const envPath = fileURLToPath(new URL(".env", import.meta.url));
+
+  if (!existsSync(envPath)) {
+    return;
+  }
+
+  const contents = readFileSync(envPath, "utf8");
+
+  for (const line of contents.split(/\r?\n/)) {
+    const trimmedLine = line.trim();
+
+    if (!trimmedLine || trimmedLine.startsWith("#")) {
+      continue;
+    }
+
+    const equalsIndex = trimmedLine.indexOf("=");
+
+    if (equalsIndex === -1) {
+      continue;
+    }
+
+    const key = trimmedLine.slice(0, equalsIndex).trim();
+    let value = trimmedLine.slice(equalsIndex + 1).trim();
+
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+
+    if (key && process.env[key] === undefined) {
+      process.env[key] = value;
+    }
+  }
+}
+
+loadLocalEnvFile();
 
 const PORT = Number(process.env.PORT || 8787);
 const PINATA_JWT = process.env.PINATA_JWT;
