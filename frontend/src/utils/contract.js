@@ -1,18 +1,12 @@
 import { ethers } from "ethers";
 
-// Fallback to empty string to not break locally if not set
-export const CONTRACT_ADDRESS =
-  import.meta.env.VITE_CONTRACT_ADDRESS ||
-  "0x0000000000000000000000000000000000000000";
+const DEPLOYED_CONTRACTS_BY_CHAIN_ID = {
+  84532: "0x4f4658ef6f545164279b1fafb2a29796c08c4d3d",
+  11155111: "0x83dcfbf71551cc20fc8a4799cc0d3ddbc2f704b3",
+};
 
 // Human-readable ABI for the MVP contract surface used by the frontend.
 export const CONTRACT_ABI = [
-  "struct Patient { string name; uint256 createdAt; bool exists; }",
-  "struct MedicalRecord { string ipfsCID; uint8 category; string recordType; address addedByClinic; uint256 timestamp; }",
-  "struct AccessGrant { address doctor; uint8 category; uint256 grantedAt; uint256 expiresAt; bool revoked; }",
-  "struct AccessRequest { address doctor; uint8 category; uint256 requestedAt; uint256 requestedDurationHours; uint256 respondedAt; uint8 status; }",
-  "struct AuditEntry { address accessor; uint8 category; uint256 timestamp; string action; }",
-
   // Patient registration
   "function registerPatient(string calldata _name) external",
   "function patients(address) external view returns (string name, uint256 createdAt, bool exists)",
@@ -37,13 +31,30 @@ export const CONTRACT_ABI = [
   "function getMyAuditLog() external view returns (tuple(address accessor, uint8 category, uint256 timestamp, string action)[])",
 ];
 
+function resolveContractAddress(chainId) {
+  const deployedAddress = DEPLOYED_CONTRACTS_BY_CHAIN_ID[Number(chainId)];
+
+  if (deployedAddress) {
+    return deployedAddress;
+  }
+
+  throw new Error(
+    `NetsanetCore is not configured for chain ${chainId}. Set VITE_CONTRACT_ADDRESS or switch MetaMask to Base Sepolia (84532) or Sepolia (11155111).`,
+  );
+}
+
 /**
  * Helper to get a ready-to-use Contract instance connected to the user's wallet.
  * @param {ethers.Signer} signer - The user's wallet signer
+ * @param {number} chainId - The active chain ID
  * @returns {ethers.Contract}
  */
-export function getContract(signer) {
-  return new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
+export function getContract(signer, chainId) {
+  return new ethers.Contract(
+    resolveContractAddress(chainId),
+    CONTRACT_ABI,
+    signer,
+  );
 }
 
 /**
@@ -59,9 +70,19 @@ export async function connectWallet() {
   const provider = new ethers.BrowserProvider(window.ethereum);
   await provider.send("eth_requestAccounts", []);
 
+  const network = await provider.getNetwork();
   const signer = await provider.getSigner();
   const address = await signer.getAddress();
-  const contract = getContract(signer);
+  const resolvedAddress = resolveContractAddress(Number(network.chainId));
+  const deployedCode = await provider.getCode(resolvedAddress);
+
+  if (deployedCode === "0x") {
+    throw new Error(
+      `No NetsanetCore contract was found at ${resolvedAddress} on chain ${network.chainId}. Switch MetaMask to the correct network or set VITE_CONTRACT_ADDRESS to the deployed contract address.`,
+    );
+  }
+
+  const contract = new ethers.Contract(resolvedAddress, CONTRACT_ABI, signer);
 
   return { provider, signer, address, contract };
 }

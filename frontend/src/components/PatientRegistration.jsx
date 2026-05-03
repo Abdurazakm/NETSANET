@@ -23,7 +23,7 @@ export default function PatientRegistration({ contract, onRegistered }) {
     } catch (err) {
       console.error(err);
       setError(
-        "Registration failed. Make sure you are on Sepolia and have test ETH.",
+        "Registration failed. Make sure you are on Base Sepolia or Sepolia and have test ETH.",
       );
     } finally {
       setLoading(false);

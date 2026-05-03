@@ -68,6 +68,12 @@ export async function uploadToIPFS(encryptedData, metadata = {}) {
 
   if (!response.ok) {
     const errorBody = await response.text();
+    if (response.status === 404) {
+      throw new Error(
+        `Upload API route not found at ${UPLOAD_API_URL}. Ensure the backend server is running and VITE_UPLOAD_API_URL points to it.`,
+      );
+    }
+
     throw new Error(`Upload API failed (${response.status}): ${errorBody}`);
   }
 
@@ -110,12 +116,7 @@ export async function fetchFromIPFS(cid) {
   let lastError = null;
   for (const url of urls) {
     try {
-      const response = await fetch(url, {
-        // Add Pinata JWT for dedicated gateway requests
-        headers: PINATA_JWT && url.includes('pinata')
-          ? { Authorization: `Bearer ${PINATA_JWT}` }
-          : {},
-      });
+      const response = await fetch(url);
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
